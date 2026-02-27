@@ -35,6 +35,20 @@ Current prefix routing is useful but can be inconsistent if it relies on tempora
   - rate-limit
 - Structured route logs
 
+## Scope (v1.5) — Generalized Time-based Model Scheduler
+
+- Define arbitrary time rules: "what time -> which model"
+- Store rules in local config (`router.schedule.json`)
+- Compile/apply rules to OpenClaw cron jobs
+- Provide management commands:
+  - add rule
+  - remove rule
+  - enable/disable rule
+  - list rules
+  - validate conflicts
+- Support precedence for overlapping rules
+- Keep route audit log for every scheduled switch
+
 ## Scope (v1.1)
 
 - Optional `@opus` adapter via Claude Code CLI (`claude -p`), with:
