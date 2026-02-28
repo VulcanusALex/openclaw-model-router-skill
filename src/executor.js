@@ -25,6 +25,18 @@ async function withRetry(task, retries = 1, delayMs = 120) {
   throw lastErr;
 }
 
+async function switchAndVerify(sessionController, targetModel) {
+  const switched = await sessionController.setModel(targetModel);
+  if (!switched) {
+    throw new ProviderUnavailableError(targetModel, { phase: 'setModel' });
+  }
+
+  const verified = await sessionController.getCurrentModel();
+  if (verified !== targetModel) {
+    throw new VerificationError(targetModel, verified);
+  }
+}
+
 async function routeAndExecute({
   message,
   config,
@@ -41,23 +53,38 @@ async function routeAndExecute({
     return { switched: false, output };
   }
 
-  const route = resolveRoute(prefix, config);
+  let route;
+  try {
+    route = resolveRoute(prefix, config);
+  } catch (err) {
+    logger.log({
+      type: 'route.failure',
+      prefix,
+      reason: err.message,
+      code: err.code || 'ROUTE_RESOLVE_FAILED',
+      latencyMs: Date.now() - startedAt,
+    });
+    throw err;
+  }
+
   const targetModel = route.model;
   const fallbackModel = route.fallbackModel || null;
 
   const current = await sessionController.getCurrentModel();
   if (current !== targetModel) {
-    await withRetry(async () => {
-      const switched = await sessionController.setModel(targetModel);
-      if (!switched) {
-        throw new ProviderUnavailableError(targetModel, { phase: 'setModel' });
-      }
-
-      const verified = await sessionController.getCurrentModel();
-      if (verified !== targetModel) {
-        throw new VerificationError(targetModel, verified);
-      }
-    }, config.retry?.maxRetries ?? 1, config.retry?.baseDelayMs ?? 120);
+    try {
+      await withRetry(async () => switchAndVerify(sessionController, targetModel), config.retry?.maxRetries ?? 1, config.retry?.baseDelayMs ?? 120);
+    } catch (err) {
+      logger.log({
+        type: 'route.failure',
+        prefix,
+        targetModel,
+        reason: err.message,
+        code: err.code || 'MODEL_SWITCH_FAILED',
+        latencyMs: Date.now() - startedAt,
+      });
+      throw err;
+    }
   }
 
   try {
@@ -72,7 +99,7 @@ async function routeAndExecute({
     return { switched: current !== targetModel, targetModel, output };
   } catch (err) {
     if (fallbackModel) {
-      await sessionController.setModel(fallbackModel);
+      await withRetry(async () => switchAndVerify(sessionController, fallbackModel), config.retry?.maxRetries ?? 1, config.retry?.baseDelayMs ?? 120);
       logger.log({
         type: 'route.fallback',
         prefix,

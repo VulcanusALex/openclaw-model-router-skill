@@ -78,3 +78,75 @@ test('routeAndExecute falls back when executor throws', async () => {
   assert.equal(result.fallback, true);
   assert.equal(result.output, 'recovered');
 });
+
+test('routeAndExecute logs failure for invalid prefix', async () => {
+  const events = [];
+  const config = loadConfig(path.join(__dirname, '..', 'router.config.json'));
+  const logger = { log(event) { events.push(event); } };
+
+  await assert.rejects(() => routeAndExecute({
+    message: '@unknown hello',
+    config,
+    sessionController: {
+      async getCurrentModel() { return 'minimax/MiniMax-M2.5'; },
+      async setModel() { return true; },
+    },
+    taskExecutor: { async execute() { return 'ok'; } },
+    logger,
+  }), /Unsupported prefix/);
+
+  assert.equal(events.at(-1).type, 'route.failure');
+  assert.equal(events.at(-1).code, 'INVALID_PREFIX');
+});
+
+test('routeAndExecute throws when fallback switch cannot verify', async () => {
+  let model = 'minimax/MiniMax-M2.5';
+  const config = loadConfig(path.join(__dirname, '..', 'router.config.json'));
+
+  await assert.rejects(() => routeAndExecute({
+    message: '@mini retry me',
+    config,
+    sessionController: {
+      async getCurrentModel() { return model; },
+      async setModel(next) {
+        if (next === 'openai-codex/gpt-5.3-codex') {
+          model = 'unexpected/model';
+          return true;
+        }
+        model = next;
+        return true;
+      },
+    },
+    taskExecutor: {
+      async execute() { throw new Error('first run fails'); },
+    },
+    logger: { log() {} },
+  }), /Model verification failed/);
+});
+
+test('routeAndExecute retries transient setModel failure', async () => {
+  let model = 'minimax/MiniMax-M2.5';
+  let attempts = 0;
+  const config = loadConfig(path.join(__dirname, '..', 'router.config.json'));
+
+  const result = await routeAndExecute({
+    message: '@codex quick task',
+    config,
+    sessionController: {
+      async getCurrentModel() { return model; },
+      async setModel(next) {
+        attempts += 1;
+        if (attempts === 1) return false;
+        model = next;
+        return true;
+      },
+    },
+    taskExecutor: {
+      async execute(input) { return `ok:${input}`; },
+    },
+    logger: { log() {} },
+  });
+
+  assert.equal(result.output, 'ok:quick task');
+  assert.ok(attempts >= 2);
+});
