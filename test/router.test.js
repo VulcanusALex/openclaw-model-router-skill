@@ -4,13 +4,21 @@ const path = require('node:path');
 const fs = require('node:fs');
 
 const { parsePrefix, resolveRoute, loadConfig, validateConfig } = require('../src/router');
+const { resolveActiveRule, detectConflicts } = require('../src/scheduler');
 const { routeAndExecute } = require('../src/executor');
 const { createLogger } = require('../src/logger');
+const { pickModelFromStatus } = require('../src/session-controller');
 
 test('parsePrefix extracts prefix and body', () => {
   const result = parsePrefix('@mini hello world');
   assert.equal(result.prefix, '@mini');
   assert.equal(result.body, 'hello world');
+});
+
+test('parsePrefix strips trailing punctuation', () => {
+  const result = parsePrefix('@mini: hello');
+  assert.equal(result.prefix, '@mini');
+  assert.equal(result.body, 'hello');
 });
 
 test('resolveRoute returns mapping for supported prefix', () => {
@@ -19,11 +27,33 @@ test('resolveRoute returns mapping for supported prefix', () => {
   assert.equal(route.model, 'openai-codex/gpt-5.3-codex');
 });
 
+test('resolveRoute supports alias prefixes', () => {
+  const config = loadConfig(path.join(__dirname, '..', 'router.config.json'));
+  const route = resolveRoute('@c', config);
+  assert.equal(route.model, 'openai-codex/gpt-5.3-codex');
+});
+
 test('validateConfig rejects bad retry section', () => {
   assert.throws(() => validateConfig({
     prefixMap: { '@mini': { model: 'minimax/MiniMax-M2.5' } },
     retry: { maxRetries: -1 },
   }), /non-negative integer/);
+});
+
+test('loadConfig respects ROUTER_CONFIG_PATH', () => {
+  const tmpPath = path.join(__dirname, 'tmp.router.config.json');
+  const payload = {
+    prefixMap: { '@x': { model: 'm1', fallbackModel: 'm2' } },
+    retry: { maxRetries: 0, baseDelayMs: 0 },
+  };
+  fs.writeFileSync(tmpPath, JSON.stringify(payload, null, 2));
+  const prev = process.env.ROUTER_CONFIG_PATH;
+  process.env.ROUTER_CONFIG_PATH = tmpPath;
+  const cfg = loadConfig();
+  assert.equal(cfg.prefixMap['@x'].model, 'm1');
+  if (prev === undefined) delete process.env.ROUTER_CONFIG_PATH;
+  else process.env.ROUTER_CONFIG_PATH = prev;
+  try { fs.unlinkSync(tmpPath); } catch {}
 });
 
 test('routeAndExecute switches model then runs body', async () => {
@@ -109,6 +139,26 @@ test('routeAndExecute raises FALLBACK_EXECUTION_FAILED when fallback run also fa
   }), /Fallback execution failed/);
 
   assert.equal(events.at(-1).code, 'FALLBACK_EXECUTION_FAILED');
+});
+
+test('routeAndExecute attempts restore on fallback failure', async () => {
+  let model = 'openai-codex/gpt-5.3-codex';
+  const config = loadConfig(path.join(__dirname, '..', 'router.config.json'));
+
+  await assert.rejects(() => routeAndExecute({
+    message: '@mini fail restore',
+    config,
+    sessionController: {
+      async getCurrentModel() { return model; },
+      async setModel(next) { model = next; return true; },
+    },
+    taskExecutor: {
+      async execute() { throw new Error('always fail'); },
+    },
+    logger: { log() {} },
+  }), /Fallback execution failed/);
+
+  assert.equal(model, 'openai-codex/gpt-5.3-codex');
 });
 
 test('routeAndExecute logs failure for invalid prefix', async () => {
@@ -208,6 +258,23 @@ test('routeAndExecute handles prefix-only message as switch confirmation', async
   assert.equal(events.at(-1).type, 'route.switch_only');
 });
 
+test('routeAndExecute reports already-on-model for prefix-only', async () => {
+  let model = 'openai-codex/gpt-5.3-codex';
+  const config = loadConfig(path.join(__dirname, '..', 'router.config.json'));
+  const result = await routeAndExecute({
+    message: '@codex',
+    config,
+    sessionController: {
+      async getCurrentModel() { return model; },
+      async setModel(next) { model = next; return true; },
+    },
+    taskExecutor: { async execute() { return 'ok'; } },
+    logger: { log() {} },
+  });
+  assert.equal(result.alreadyOnModel, true);
+  assert.equal(result.output, 'already_on:openai-codex/gpt-5.3-codex');
+});
+
 
 test('routeAndExecute passes through non-prefix input', async () => {
   const config = loadConfig(path.join(__dirname, '..', 'router.config.json'));
@@ -227,4 +294,44 @@ test('routeAndExecute passes through non-prefix input', async () => {
 
   assert.equal(result.switched, false);
   assert.deepEqual(outputs, ['   hello router  ']);
+});
+
+test('scheduler resolves active rule by time and priority', () => {
+  const schedule = {
+    rules: [
+      { id: 'a', days: ['sat'], start: '09:00', end: '18:00', model: 'm1', priority: 1, enabled: true },
+      { id: 'b', days: ['sat'], start: '09:00', end: '18:00', model: 'm2', priority: 5, enabled: true },
+    ],
+  };
+  const at = new Date('2026-02-28T10:00:00');
+  const rule = resolveActiveRule(schedule, at);
+  assert.equal(rule.id, 'b');
+});
+
+test('scheduler detects overlapping conflicts with same priority', () => {
+  const schedule = {
+    rules: [
+      { id: 'a', days: ['sat'], start: '09:00', end: '18:00', model: 'm1', priority: 1, enabled: true },
+      { id: 'b', days: ['sat'], start: '12:00', end: '20:00', model: 'm2', priority: 1, enabled: true },
+    ],
+  };
+  const conflicts = detectConflicts(schedule);
+  assert.equal(conflicts.length, 1);
+});
+
+test('scheduler resolve respects configured timezone', () => {
+  const schedule = {
+    timezone: 'Europe/Rome',
+    rules: [
+      { id: 'rome_day', days: ['mon'], start: '09:00', end: '18:00', model: 'm1', priority: 1, enabled: true },
+    ],
+  };
+  const atUtc = new Date('2026-03-02T08:30:00Z'); // 09:30 in Europe/Rome
+  const rule = resolveActiveRule(schedule, atUtc);
+  assert.equal(rule.id, 'rome_day');
+});
+
+test('pickModelFromStatus prefers activeModel over defaultModel', () => {
+  const picked = pickModelFromStatus({ activeModel: 'm_active', defaultModel: 'm_default' });
+  assert.equal(picked, 'm_active');
 });
