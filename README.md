@@ -1,4 +1,4 @@
-![OpenClaw Model Router](assets/logo.svg)
+![OpenClaw Model Router](assets/logo.jpg?v=20260228-2315)
 
 <h1 align="center">OpenClaw Model Router Skill</h1>
 
