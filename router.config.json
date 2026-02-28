@@ -1,0 +1,16 @@
+{
+  "prefixMap": {
+    "@mini": {
+      "model": "minimax/MiniMax-M2.5",
+      "fallbackModel": "openai-codex/gpt-5.3-codex"
+    },
+    "@codex": {
+      "model": "openai-codex/gpt-5.3-codex",
+      "fallbackModel": "minimax/MiniMax-M2.5"
+    }
+  },
+  "retry": {
+    "maxRetries": 2,
+    "baseDelayMs": 80
+  }
+}
