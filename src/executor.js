@@ -125,8 +125,26 @@ async function routeAndExecute({
         reason: err.message,
         latencyMs: Date.now() - startedAt,
       });
-      const output = await taskExecutor.execute(body);
-      return { switched: true, targetModel: fallbackModel, output, fallback: true };
+      try {
+        const output = await taskExecutor.execute(body);
+        return { switched: true, targetModel: fallbackModel, output, fallback: true };
+      } catch (fallbackErr) {
+        const wrappedFallback = fallbackErr instanceof RouterError
+          ? fallbackErr
+          : new RouterError(`Fallback execution failed: ${fallbackErr.message}`, {
+            code: 'FALLBACK_EXECUTION_FAILED',
+            retryable: false,
+          });
+        logger.log({
+          type: 'route.failure',
+          prefix,
+          targetModel: fallbackModel,
+          reason: wrappedFallback.message,
+          code: wrappedFallback.code,
+          latencyMs: Date.now() - startedAt,
+        });
+        throw wrappedFallback;
+      }
     }
 
     const wrapped = err instanceof RouterError

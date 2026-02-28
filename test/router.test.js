@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 const fs = require('node:fs');
 
-const { parsePrefix, resolveRoute, loadConfig } = require('../src/router');
+const { parsePrefix, resolveRoute, loadConfig, validateConfig } = require('../src/router');
 const { routeAndExecute } = require('../src/executor');
 const { createLogger } = require('../src/logger');
 
@@ -17,6 +17,13 @@ test('resolveRoute returns mapping for supported prefix', () => {
   const config = loadConfig(path.join(__dirname, '..', 'router.config.json'));
   const route = resolveRoute('@codex', config);
   assert.equal(route.model, 'openai-codex/gpt-5.3-codex');
+});
+
+test('validateConfig rejects bad retry section', () => {
+  assert.throws(() => validateConfig({
+    prefixMap: { '@mini': { model: 'minimax/MiniMax-M2.5' } },
+    retry: { maxRetries: -1 },
+  }), /non-negative integer/);
 });
 
 test('routeAndExecute switches model then runs body', async () => {
@@ -77,6 +84,31 @@ test('routeAndExecute falls back when executor throws', async () => {
 
   assert.equal(result.fallback, true);
   assert.equal(result.output, 'recovered');
+});
+
+test('routeAndExecute raises FALLBACK_EXECUTION_FAILED when fallback run also fails', async () => {
+  let model = 'openai-codex/gpt-5.3-codex';
+  let runs = 0;
+  const events = [];
+  const config = loadConfig(path.join(__dirname, '..', 'router.config.json'));
+
+  await assert.rejects(() => routeAndExecute({
+    message: '@mini still broken',
+    config,
+    sessionController: {
+      async getCurrentModel() { return model; },
+      async setModel(next) { model = next; return true; },
+    },
+    taskExecutor: {
+      async execute() {
+        runs += 1;
+        throw new Error(`run-${runs}`);
+      },
+    },
+    logger: { log(event) { events.push(event); } },
+  }), /Fallback execution failed/);
+
+  assert.equal(events.at(-1).code, 'FALLBACK_EXECUTION_FAILED');
 });
 
 test('routeAndExecute logs failure for invalid prefix', async () => {
@@ -174,4 +206,25 @@ test('routeAndExecute handles prefix-only message as switch confirmation', async
   assert.equal(result.targetModel, 'openai-codex/gpt-5.3-codex');
   assert.deepEqual(calls, []);
   assert.equal(events.at(-1).type, 'route.switch_only');
+});
+
+
+test('routeAndExecute passes through non-prefix input', async () => {
+  const config = loadConfig(path.join(__dirname, '..', 'router.config.json'));
+  const outputs = [];
+  const result = await routeAndExecute({
+    message: '   hello router  ',
+    config,
+    sessionController: {
+      async getCurrentModel() { return 'minimax/MiniMax-M2.5'; },
+      async setModel() { return true; },
+    },
+    taskExecutor: {
+      async execute(input) { outputs.push(input); return 'ok'; },
+    },
+    logger: { log() {} },
+  });
+
+  assert.equal(result.switched, false);
+  assert.deepEqual(outputs, ['   hello router  ']);
 });
