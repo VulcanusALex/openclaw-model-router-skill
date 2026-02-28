@@ -150,3 +150,28 @@ test('routeAndExecute retries transient setModel failure', async () => {
   assert.equal(result.output, 'ok:quick task');
   assert.ok(attempts >= 2);
 });
+
+test('routeAndExecute handles prefix-only message as switch confirmation', async () => {
+  let model = 'minimax/MiniMax-M2.5';
+  const calls = [];
+  const events = [];
+  const config = loadConfig(path.join(__dirname, '..', 'router.config.json'));
+
+  const result = await routeAndExecute({
+    message: '@codex',
+    config,
+    sessionController: {
+      async getCurrentModel() { return model; },
+      async setModel(next) { model = next; return true; },
+    },
+    taskExecutor: {
+      async execute(input) { calls.push(input); return `ok:${input}`; },
+    },
+    logger: { log(event) { events.push(event); } },
+  });
+
+  assert.equal(result.switchOnly, true);
+  assert.equal(result.targetModel, 'openai-codex/gpt-5.3-codex');
+  assert.deepEqual(calls, []);
+  assert.equal(events.at(-1).type, 'route.switch_only');
+});

@@ -87,8 +87,25 @@ async function routeAndExecute({
     }
   }
 
+  const switched = current !== targetModel;
+  if (!body) {
+    logger.log({
+      type: 'route.switch_only',
+      prefix,
+      targetModel,
+      switched,
+      latencyMs: Date.now() - startedAt,
+    });
+    return {
+      switched,
+      targetModel,
+      switchOnly: true,
+      output: `switched:${targetModel}`,
+    };
+  }
+
   try {
-    const output = await taskExecutor.execute(body || message);
+    const output = await taskExecutor.execute(body);
     logger.log({
       type: 'route.success',
       prefix,
@@ -96,7 +113,7 @@ async function routeAndExecute({
       fallbackModel,
       latencyMs: Date.now() - startedAt,
     });
-    return { switched: current !== targetModel, targetModel, output };
+    return { switched, targetModel, output };
   } catch (err) {
     if (fallbackModel) {
       await withRetry(async () => switchAndVerify(sessionController, fallbackModel), config.retry?.maxRetries ?? 1, config.retry?.baseDelayMs ?? 120);
@@ -108,7 +125,7 @@ async function routeAndExecute({
         reason: err.message,
         latencyMs: Date.now() - startedAt,
       });
-      const output = await taskExecutor.execute(body || message);
+      const output = await taskExecutor.execute(body);
       return { switched: true, targetModel: fallbackModel, output, fallback: true };
     }
 
