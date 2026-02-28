@@ -1,6 +1,4 @@
-<p align="center">
-  <img src="assets/logo.svg" alt="OpenClaw Model Router" width="100%" />
-</p>
+![OpenClaw Model Router](assets/logo.svg)
 
 <h1 align="center">OpenClaw Model Router Skill</h1>
 

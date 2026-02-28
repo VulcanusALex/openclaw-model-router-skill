@@ -27,7 +27,7 @@
     OpenClaw Model Router
   </text>
   <text x="180" y="136" fill="#93C5FD" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="20" font-weight="500">
-    Prefix Routing • Time Scheduler • Verify & Rollback • Audit Log
+    Prefix Routing • Time Scheduler • Verify &amp; Rollback • Audit Log
   </text>
 
   <g transform="translate(180,162)">
