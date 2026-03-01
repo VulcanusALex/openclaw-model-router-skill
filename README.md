@@ -102,10 +102,12 @@ This repo now supports a real production switch loop:
 Important fields:
 
 - `prefixMap`, `aliasMap`
-- `retry.maxRetries / baseDelayMs / verifyRetries / verifyDelayMs`
+- `retry.maxRetries / baseDelayMs / verifyRetries / verifyDelayMs`（全部要求非负整数）
 - `defaultModel`
 - `auth.requiredEnv[]`
 - `safety.rollbackOnFailure / lockPath / lockStaleMs`
+
+`rollbackOnFailure=false` 时，fallback 二次执行失败后会保留当时模型状态，不强制恢复到初始模型。
 - `logging.path`
 - `sessionController.binary / setArgsPrefix / statusArgs`
 
@@ -115,6 +117,8 @@ Important fields:
 
 ```bash
 node --test
+# flake soak (example: 20 rounds)
+./test/soak.sh 20
 ```
 
 Current suite covers:

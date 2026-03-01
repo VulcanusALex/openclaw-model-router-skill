@@ -34,6 +34,9 @@ function validateConfig(parsed) {
       if (!target.startsWith('@')) {
         throw new Error(`Invalid alias target: ${target}. Target must start with @`);
       }
+      if (!parsed.prefixMap[target]) {
+        throw new Error(`alias ${alias} points to missing prefix ${target}`);
+      }
     }
   }
 
@@ -62,6 +65,12 @@ function validateConfig(parsed) {
     }
     if (parsed.retry.baseDelayMs !== undefined && (!Number.isInteger(parsed.retry.baseDelayMs) || parsed.retry.baseDelayMs < 0)) {
       throw new Error('retry.baseDelayMs must be a non-negative integer');
+    }
+    if (parsed.retry.verifyRetries !== undefined && (!Number.isInteger(parsed.retry.verifyRetries) || parsed.retry.verifyRetries < 0)) {
+      throw new Error('retry.verifyRetries must be a non-negative integer');
+    }
+    if (parsed.retry.verifyDelayMs !== undefined && (!Number.isInteger(parsed.retry.verifyDelayMs) || parsed.retry.verifyDelayMs < 0)) {
+      throw new Error('retry.verifyDelayMs must be a non-negative integer');
     }
   }
 

@@ -83,6 +83,7 @@ async function routeAndExecute({
   const targetModel = route.model;
   const fallbackModel = route.fallbackModel || null;
   const resolvedPrefix = route._resolvedPrefix || prefix;
+  const rollbackOnFailure = config?.safety?.rollbackOnFailure !== false;
 
   const current = await sessionController.getCurrentModel();
   const alreadyOnModel = current === targetModel;
@@ -172,28 +173,30 @@ async function routeAndExecute({
         return { switched: true, targetModel: fallbackModel, output, fallback: true };
       } catch (fallbackErr) {
         // Attempt to restore original model on fallback failure.
-        try {
-          if (current) {
-            await withRetry(
-              async () => switchAndVerify(
-                sessionController,
-                current,
-                config.retry?.verifyRetries ?? 2,
-                config.retry?.verifyDelayMs ?? 80,
-              ),
-              config.retry?.maxRetries ?? 1,
-              config.retry?.baseDelayMs ?? 120,
-            );
+        if (rollbackOnFailure) {
+          try {
+            if (current) {
+              await withRetry(
+                async () => switchAndVerify(
+                  sessionController,
+                  current,
+                  config.retry?.verifyRetries ?? 2,
+                  config.retry?.verifyDelayMs ?? 80,
+                ),
+                config.retry?.maxRetries ?? 1,
+                config.retry?.baseDelayMs ?? 120,
+              );
+            }
+          } catch (restoreErr) {
+            logger.log({
+              type: 'route.restore_failed',
+              prefix,
+              targetModel: current,
+              reason: restoreErr.message,
+              code: restoreErr.code || 'MODEL_RESTORE_FAILED',
+              latencyMs: Date.now() - startedAt,
+            });
           }
-        } catch (restoreErr) {
-          logger.log({
-            type: 'route.restore_failed',
-            prefix,
-            targetModel: current,
-            reason: restoreErr.message,
-            code: restoreErr.code || 'MODEL_RESTORE_FAILED',
-            latencyMs: Date.now() - startedAt,
-          });
         }
         const wrappedFallback = fallbackErr instanceof RouterError
           ? fallbackErr

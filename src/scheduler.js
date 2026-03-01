@@ -113,17 +113,21 @@ function isRuleActive(rule, at, timezone = 'local') {
   if (Number.isNaN(date.getTime())) return false;
   const { day, minutes } = getDayMinutesInTimezone(date, timezone);
   const days = normalizeDays(rule.days) || [];
-  if (!days.includes(day)) return false;
   if (rule.enabled === false) return false;
   const start = parseTimeToMinutes(rule.start);
   const end = parseTimeToMinutes(rule.end);
   if (start === null || end === null) return false;
   if (start === end) return false;
   if (start < end) {
-    return minutes >= start && minutes < end;
+    return days.includes(day) && minutes >= start && minutes < end;
   }
   // Overnight span (e.g. 22:00 -> 06:00)
-  return minutes >= start || minutes < end;
+  if (minutes >= start) {
+    return days.includes(day);
+  }
+  const dayIdx = DAYS.indexOf(day);
+  const prevDay = DAYS[(dayIdx + 6) % 7];
+  return days.includes(prevDay);
 }
 
 function resolveActiveRule(schedule, at = new Date()) {

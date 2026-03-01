@@ -6,7 +6,20 @@ const execFileAsync = promisify(execFile);
 
 function pickModelFromStatus(payload) {
   if (!payload || typeof payload !== 'object') return null;
-  return payload.activeModel || payload.model || payload.defaultModel || null;
+
+  const candidates = [
+    payload.activeModel,
+    payload.model,
+    payload.defaultModel,
+    payload?.models?.activeModel,
+    payload?.models?.model,
+    payload?.models?.defaultModel,
+    payload?.data?.activeModel,
+    payload?.data?.model,
+    payload?.data?.defaultModel,
+  ];
+
+  return candidates.find((v) => typeof v === 'string' && v.trim() !== '') || null;
 }
 
 function ensureAuth(authConfig = {}) {

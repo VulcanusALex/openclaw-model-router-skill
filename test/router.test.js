@@ -4,10 +4,10 @@ const path = require('node:path');
 const fs = require('node:fs');
 
 const { parsePrefix, resolveRoute, loadConfig, validateConfig } = require('../src/router');
-const { resolveActiveRule, detectConflicts } = require('../src/scheduler');
+const { resolveActiveRule, detectConflicts, validateSchedule } = require('../src/scheduler');
 const { routeAndExecute } = require('../src/executor');
 const { createLogger } = require('../src/logger');
-const { pickModelFromStatus } = require('../src/session-controller');
+const { pickModelFromStatus, ensureAuth } = require('../src/session-controller');
 
 test('parsePrefix extracts prefix and body', () => {
   const result = parsePrefix('@mini hello world');
@@ -33,11 +33,28 @@ test('resolveRoute supports alias prefixes', () => {
   assert.equal(route.model, 'openai-codex/gpt-5.3-codex');
 });
 
+test('validateConfig rejects alias target that does not exist in prefixMap', () => {
+  assert.throws(() => validateConfig({
+    prefixMap: { '@mini': { model: 'minimax/MiniMax-M2.5' } },
+    aliasMap: { '@m': '@missing' },
+  }), /points to missing prefix/);
+});
+
 test('validateConfig rejects bad retry section', () => {
   assert.throws(() => validateConfig({
     prefixMap: { '@mini': { model: 'minimax/MiniMax-M2.5' } },
     retry: { maxRetries: -1 },
   }), /non-negative integer/);
+
+  assert.throws(() => validateConfig({
+    prefixMap: { '@mini': { model: 'minimax/MiniMax-M2.5' } },
+    retry: { verifyRetries: -1 },
+  }), /retry.verifyRetries/);
+
+  assert.throws(() => validateConfig({
+    prefixMap: { '@mini': { model: 'minimax/MiniMax-M2.5' } },
+    retry: { verifyDelayMs: -1 },
+  }), /retry.verifyDelayMs/);
 });
 
 test('loadConfig respects ROUTER_CONFIG_PATH', () => {
@@ -147,6 +164,33 @@ test('routeAndExecute attempts restore on fallback failure', async () => {
 
   await assert.rejects(() => routeAndExecute({
     message: '@mini fail restore',
+    config,
+    sessionController: {
+      async getCurrentModel() { return model; },
+      async setModel(next) { model = next; return true; },
+    },
+    taskExecutor: {
+      async execute() { throw new Error('always fail'); },
+    },
+    logger: { log() {} },
+  }), /Fallback execution failed/);
+
+  assert.equal(model, 'openai-codex/gpt-5.3-codex');
+});
+
+test('routeAndExecute skips restore when rollbackOnFailure is false', async () => {
+  let model = 'openai-codex/gpt-5.3-codex';
+  const base = loadConfig(path.join(__dirname, '..', 'router.config.json'));
+  const config = {
+    ...base,
+    safety: {
+      ...(base.safety || {}),
+      rollbackOnFailure: false,
+    },
+  };
+
+  await assert.rejects(() => routeAndExecute({
+    message: '@mini fail without restore',
     config,
     sessionController: {
       async getCurrentModel() { return model; },
@@ -319,6 +363,15 @@ test('scheduler detects overlapping conflicts with same priority', () => {
   assert.equal(conflicts.length, 1);
 });
 
+test('validateSchedule rejects duplicate rule ids', () => {
+  assert.throws(() => validateSchedule({
+    rules: [
+      { id: 'dup', days: ['mon'], start: '09:00', end: '10:00', model: 'm1', priority: 1, enabled: true },
+      { id: 'dup', days: ['tue'], start: '09:00', end: '10:00', model: 'm2', priority: 1, enabled: true },
+    ],
+  }), /duplicate rule id/);
+});
+
 test('scheduler resolve respects configured timezone', () => {
   const schedule = {
     timezone: 'Europe/Rome',
@@ -331,7 +384,63 @@ test('scheduler resolve respects configured timezone', () => {
   assert.equal(rule.id, 'rome_day');
 });
 
+test('scheduler overnight rule remains active after midnight using previous day', () => {
+  const schedule = {
+    timezone: 'UTC',
+    rules: [
+      { id: 'sat_night', days: ['sat'], start: '22:00', end: '06:00', model: 'm_night', priority: 1, enabled: true },
+    ],
+  };
+  const at = new Date('2026-03-01T01:30:00Z'); // Sunday early morning, should still match Saturday overnight rule.
+  const rule = resolveActiveRule(schedule, at);
+  assert.equal(rule.id, 'sat_night');
+});
+
+test('scheduler overnight rule does not leak into following day evening', () => {
+  const schedule = {
+    timezone: 'UTC',
+    rules: [
+      { id: 'sat_night', days: ['sat'], start: '22:00', end: '06:00', model: 'm_night', priority: 1, enabled: true },
+    ],
+  };
+  const at = new Date('2026-03-01T22:30:00Z'); // Sunday late evening should not match saturday-only rule.
+  const rule = resolveActiveRule(schedule, at);
+  assert.equal(rule, null);
+});
+
 test('pickModelFromStatus prefers activeModel over defaultModel', () => {
   const picked = pickModelFromStatus({ activeModel: 'm_active', defaultModel: 'm_default' });
   assert.equal(picked, 'm_active');
+});
+
+test('pickModelFromStatus supports nested models payload', () => {
+  const picked = pickModelFromStatus({ models: { activeModel: 'm_nested' } });
+  assert.equal(picked, 'm_nested');
+});
+
+test('pickModelFromStatus supports nested data payload and ignores empty strings', () => {
+  const picked = pickModelFromStatus({ data: { activeModel: '   ', model: 'm_data' } });
+  assert.equal(picked, 'm_data');
+});
+
+test('ensureAuth throws AUTH_MISSING when required env is absent', () => {
+  const prev = process.env.ROUTER_TEST_TOKEN;
+  delete process.env.ROUTER_TEST_TOKEN;
+  try {
+    assert.throws(() => ensureAuth({ requiredEnv: ['ROUTER_TEST_TOKEN'] }), /Missing auth env/);
+  } finally {
+    if (prev === undefined) delete process.env.ROUTER_TEST_TOKEN;
+    else process.env.ROUTER_TEST_TOKEN = prev;
+  }
+});
+
+test('ensureAuth passes when required env exists', () => {
+  const prev = process.env.ROUTER_TEST_TOKEN;
+  process.env.ROUTER_TEST_TOKEN = 'ok';
+  try {
+    ensureAuth({ requiredEnv: ['ROUTER_TEST_TOKEN'] });
+  } finally {
+    if (prev === undefined) delete process.env.ROUTER_TEST_TOKEN;
+    else process.env.ROUTER_TEST_TOKEN = prev;
+  }
 });
