@@ -13,8 +13,9 @@ with verification, rollback, lock protection, and JSONL audit logs.
 
 - **Prefix routing**
   - `@codex` → `openai-codex/gpt-5.3-codex`
-  - `@mini` → `minimax/MiniMax-M2.5`
-  - aliases: `@c`, `@m`
+  - `@mini` → `minimax-cn/MiniMax-M2.5-highspeed` (CN 极速版)
+  - `@mini.std` → `minimax/MiniMax-M2.5` (全球标准版)
+  - aliases: `@c`, `@m` → `@mini`
 - **Route pipeline**: `parse -> validate -> switch -> verify -> execute`
 - **Time-based scheduler** with rule priority + overnight windows
 - **Production safety**
@@ -26,6 +27,26 @@ with verification, rollback, lock protection, and JSONL audit logs.
 ---
 
 ## Quick Start
+
+### 1. Configure API Keys
+
+Run the setup script to configure your API keys:
+
+```bash
+chmod +x scripts/setup-api-keys.sh
+./scripts/setup-api-keys.sh
+```
+
+This will prompt you to enter:
+- MiniMax Global API key (for `@mini.std`)
+- MiniMax CN API key (for `@mini`)
+
+After setup, restart the gateway:
+```bash
+openclaw gateway restart
+```
+
+### 2. Validate config
 
 ```bash
 # Validate config
