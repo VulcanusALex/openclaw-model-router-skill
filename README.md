@@ -140,6 +140,7 @@ Important fields:
 node --test
 # flake soak (example: 20 rounds)
 ./test/soak.sh 20
+# 输出包含日志目录；失败时会给出首个失败日志路径
 ```
 
 Current suite covers:

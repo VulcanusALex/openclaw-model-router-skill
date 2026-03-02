@@ -2,11 +2,12 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const fs = require('node:fs');
+const { execFileSync } = require('node:child_process');
 
 const { parsePrefix, resolveRoute, loadConfig, validateConfig } = require('../src/router');
 const { resolveActiveRule, detectConflicts, validateSchedule } = require('../src/scheduler');
 const { routeAndExecute } = require('../src/executor');
-const { createLogger } = require('../src/logger');
+const { createLogger, rotateIfNeeded } = require('../src/logger');
 const { pickModelFromStatus, ensureAuth } = require('../src/session-controller');
 
 test('parsePrefix extracts prefix and body', () => {
@@ -101,6 +102,38 @@ test('routeAndExecute switches model then runs body', async () => {
   assert.deepEqual(calls, ['build parser']);
   const lines = fs.readFileSync(logPath, 'utf8').trim().split('\n');
   assert.ok(lines.at(-1).includes('route.success'));
+});
+
+test('createLogger writes jsonl records with ts/type', () => {
+  const logPath = path.join(__dirname, 'tmp.logger.schema.jsonl');
+  try { fs.unlinkSync(logPath); } catch {}
+
+  const logger = createLogger(logPath);
+  logger.log({ type: 'route.success', routeId: 'r1' });
+  logger.log({ type: 'route.failure', code: 'X' });
+
+  const lines = fs.readFileSync(logPath, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+  assert.equal(lines.length, 2);
+  assert.equal(lines[0].type, 'route.success');
+  assert.ok(/^\d{4}-\d{2}-\d{2}T/.test(lines[0].ts));
+  assert.equal(lines[1].type, 'route.failure');
+  assert.ok(/^\d{4}-\d{2}-\d{2}T/.test(lines[1].ts));
+
+  try { fs.unlinkSync(logPath); } catch {}
+});
+
+test('rotateIfNeeded rotates oversized log file', () => {
+  const logPath = path.join(__dirname, 'tmp.rotate.log');
+  try { fs.unlinkSync(logPath); } catch {}
+  try { fs.unlinkSync(`${logPath}.1`); } catch {}
+
+  fs.writeFileSync(logPath, 'x'.repeat(64), 'utf8');
+  rotateIfNeeded(logPath, 32, 2);
+
+  assert.equal(fs.existsSync(logPath), false);
+  assert.equal(fs.existsSync(`${logPath}.1`), true);
+
+  try { fs.unlinkSync(`${logPath}.1`); } catch {}
 });
 
 test('routeAndExecute falls back when executor throws', async () => {
@@ -372,6 +405,28 @@ test('validateSchedule rejects duplicate rule ids', () => {
   }), /duplicate rule id/);
 });
 
+test('scheduler detects overnight conflict with next-day early window', () => {
+  const schedule = {
+    rules: [
+      { id: 'sat_night', days: ['sat'], start: '22:00', end: '06:00', model: 'night', priority: 2, enabled: true },
+      { id: 'sun_early', days: ['sun'], start: '01:00', end: '03:00', model: 'early', priority: 2, enabled: true },
+    ],
+  };
+  const conflicts = detectConflicts(schedule);
+  assert.deepEqual(conflicts, [{ a: 'sat_night', b: 'sun_early' }]);
+});
+
+test('scheduler does not report overnight conflict when windows do not overlap', () => {
+  const schedule = {
+    rules: [
+      { id: 'sat_night', days: ['sat'], start: '22:00', end: '01:00', model: 'night', priority: 2, enabled: true },
+      { id: 'sun_morning', days: ['sun'], start: '02:00', end: '03:00', model: 'morning', priority: 2, enabled: true },
+    ],
+  };
+  const conflicts = detectConflicts(schedule);
+  assert.equal(conflicts.length, 0);
+});
+
 test('scheduler resolve respects configured timezone', () => {
   const schedule = {
     timezone: 'Europe/Rome',
@@ -442,5 +497,34 @@ test('ensureAuth passes when required env exists', () => {
   } finally {
     if (prev === undefined) delete process.env.ROUTER_TEST_TOKEN;
     else process.env.ROUTER_TEST_TOKEN = prev;
+  }
+});
+
+test('cli schedule apply returns RULE_DISABLED for disabled rule id', () => {
+  const schedulePath = path.join(__dirname, 'tmp.schedule.disabled.json');
+  fs.writeFileSync(schedulePath, JSON.stringify({
+    timezone: 'UTC',
+    rules: [
+      { id: 'disabled_rule', days: ['mon'], start: '00:00', end: '23:59', model: 'm_disabled', priority: 1, enabled: false },
+    ],
+  }, null, 2));
+
+  try {
+    assert.throws(() => execFileSync('node', [
+      path.join(__dirname, '..', 'src', 'cli.js'),
+      'schedule', 'apply',
+      '--id', 'disabled_rule',
+      '--schedule', schedulePath,
+      '--config', path.join(__dirname, '..', 'router.config.json'),
+      '--json',
+    ], { encoding: 'utf8', stdio: 'pipe' }), (err) => {
+      assert.equal(err.status, 4);
+      const payload = JSON.parse(String(err.stdout || '{}'));
+      assert.equal(payload.code, 'RULE_DISABLED');
+      assert.equal(payload.ruleId, 'disabled_rule');
+      return true;
+    });
+  } finally {
+    try { fs.unlinkSync(schedulePath); } catch {}
   }
 });

@@ -154,11 +154,7 @@ function detectConflicts(schedule) {
       const a = rules[i];
       const b = rules[j];
       if ((a.priority || 0) !== (b.priority || 0)) continue;
-      const daysA = normalizeDays(a.days) || [];
-      const daysB = normalizeDays(b.days) || [];
-      const overlapDay = daysA.some(d => daysB.includes(d));
-      if (!overlapDay) continue;
-      if (rangesOverlap(a, b)) {
+      if (rulesOverlap(a, b)) {
         conflicts.push({ a: a.id, b: b.id });
       }
     }
@@ -166,24 +162,42 @@ function detectConflicts(schedule) {
   return conflicts;
 }
 
-function rangesOverlap(a, b) {
-  const aStart = parseTimeToMinutes(a.start);
-  const aEnd = parseTimeToMinutes(a.end);
-  const bStart = parseTimeToMinutes(b.start);
-  const bEnd = parseTimeToMinutes(b.end);
-  if (aStart === null || aEnd === null || bStart === null || bEnd === null) return false;
-  const toIntervals = (start, end) => {
-    if (start < end) return [[start, end]];
-    return [[start, 1440], [0, end]];
-  };
-  const aIntervals = toIntervals(aStart, aEnd);
-  const bIntervals = toIntervals(bStart, bEnd);
+function rulesOverlap(a, b) {
+  const aIntervals = toWeeklyIntervals(a);
+  const bIntervals = toWeeklyIntervals(b);
+  if (aIntervals.length === 0 || bIntervals.length === 0) return false;
+
   for (const [as, ae] of aIntervals) {
     for (const [bs, be] of bIntervals) {
       if (Math.max(as, bs) < Math.min(ae, be)) return true;
     }
   }
   return false;
+}
+
+function toWeeklyIntervals(rule) {
+  const start = parseTimeToMinutes(rule.start);
+  const end = parseTimeToMinutes(rule.end);
+  const days = normalizeDays(rule.days) || [];
+  if (start === null || end === null || start === end || days.length === 0) return [];
+
+  const intervals = [];
+  for (const day of days) {
+    const dayIdx = DAYS.indexOf(day);
+    if (dayIdx < 0) continue;
+    const base = dayIdx * 1440;
+
+    if (start < end) {
+      intervals.push([base + start, base + end]);
+      continue;
+    }
+
+    intervals.push([base + start, base + 1440]);
+    const nextDayIdx = (dayIdx + 1) % DAYS.length;
+    intervals.push([nextDayIdx * 1440, nextDayIdx * 1440 + end]);
+  }
+
+  return intervals;
 }
 
 function addRule(schedule, rule) {

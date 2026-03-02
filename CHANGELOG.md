@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-03-02
+
+- Fixed scheduler conflict detection for overnight windows that overlap next-day early rules.
+- Added regression tests for overnight overlap/non-overlap conflict detection.
+- `schedule apply --id <rule>` now rejects disabled rules with `RULE_DISABLED`.
+- Added CLI regression test for disabled-rule apply behavior.
+- Improved `test/soak.sh` to emit per-run logs and first-failure log path for faster triage.
+
 ## 2026-03-01
 
 - Executor now respects `safety.rollbackOnFailure=false` when fallback execution also fails.

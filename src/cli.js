@@ -256,6 +256,13 @@ async function main() {
         process.exit(4);
       }
 
+      if (rule.enabled === false) {
+        const payload = { ok: false, code: 'RULE_DISABLED', at: when.toISOString(), ruleId: rule.id };
+        if (outputJson) console.log(JSON.stringify(payload, null, 2));
+        else console.log('rule_disabled');
+        process.exit(4);
+      }
+
       await applyRule({
         rule,
         config,
