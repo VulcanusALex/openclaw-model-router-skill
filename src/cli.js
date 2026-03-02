@@ -286,10 +286,23 @@ async function main() {
         process.exit(2);
       }
       const config = loadConfig(configPath || undefined);
-      const fallbackModel = config.defaultModel || null;
+      let fallbackModel = config.defaultModel || null;
+      let modelSource = 'defaultModel';
       if (!fallbackModel) {
-        console.error('defaultModel missing in router config; cannot perform schedule end');
-        process.exit(2);
+        const controller = createOpenClawSessionController({
+          ...(config.sessionController || {}),
+          auth: config.auth || {},
+        });
+        try {
+          fallbackModel = await controller.getCurrentModel();
+          modelSource = 'currentModel';
+        } catch (err) {
+          const reason = `defaultModel missing in router config; cannot infer from session status: ${err.message}`;
+          const payload = { ok: false, code: 'DEFAULT_MODEL_UNAVAILABLE', reason, ruleId: `${rule.id}:end` };
+          if (outputJson) console.log(JSON.stringify(payload, null, 2));
+          else console.error(reason);
+          process.exit(2);
+        }
       }
       await applyRule({
         rule: { ...rule, id: `${rule.id}:end`, model: fallbackModel },
@@ -298,6 +311,9 @@ async function main() {
         scheduleTimezone: sched.timezone || 'local',
         outputJson,
       });
+      if (outputJson) {
+        console.log(JSON.stringify({ ok: true, ruleId: `${rule.id}:end`, endModelSource: modelSource }, null, 2));
+      }
       return;
     }
 

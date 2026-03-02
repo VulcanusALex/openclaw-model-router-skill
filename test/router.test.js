@@ -524,7 +524,122 @@ test('cli schedule apply returns RULE_DISABLED for disabled rule id', () => {
       assert.equal(payload.ruleId, 'disabled_rule');
       return true;
     });
+
+
+test('cli schedule end infers fallback model from current session when defaultModel missing', () => {
+  const schedulePath = path.join(__dirname, 'tmp.schedule.end.json');
+  const configPath = path.join(__dirname, 'tmp.router.config.end.json');
+  const fakeBin = path.join(__dirname, 'tmp.openclaw.fake.sh');
+
+  fs.writeFileSync(schedulePath, JSON.stringify({
+    timezone: 'UTC',
+    rules: [
+      { id: 'night_shift', days: ['mon'], start: '00:00', end: '23:59', model: 'm_night', priority: 1, enabled: true },
+    ],
+  }, null, 2));
+
+  fs.writeFileSync(configPath, JSON.stringify({
+    prefixMap: { '@mini': { model: 'm_a', fallbackModel: 'm_b' } },
+    auth: { requiredEnv: [] },
+    safety: { rollbackOnFailure: false, lockPath: path.join(__dirname, 'tmp.router.lock') },
+    logging: { path: path.join(__dirname, 'tmp.router.end.log.jsonl') },
+    sessionController: {
+      binary: fakeBin,
+      setArgsPrefix: ['models', 'set'],
+      statusArgs: ['models', 'status', '--json'],
+      timeoutMs: 5000,
+    },
+  }, null, 2));
+
+  fs.writeFileSync(fakeBin, `#!/usr/bin/env bash
+if [ "\$1" = "models" ] && [ "\$2" = "status" ]; then
+  echo '{"activeModel":"m_current"}'
+  exit 0
+fi
+if [ "\$1" = "models" ] && [ "\$2" = "set" ]; then
+  echo "ok"
+  exit 0
+fi
+exit 1
+`);
+  fs.chmodSync(fakeBin, 0o755);
+
+  try {
+    const output = execFileSync('node', [
+      path.join(__dirname, '..', 'src', 'cli.js'),
+      'schedule', 'end',
+      '--id', 'night_shift',
+      '--schedule', schedulePath,
+      '--config', configPath,
+      '--json',
+    ], { encoding: 'utf8', stdio: 'pipe' });
+
+    const docs = output
+      .split(/\n(?=\{)/)
+      .map((chunk) => chunk.trim())
+      .filter(Boolean)
+      .map((chunk) => JSON.parse(chunk));
+
+    assert.equal(docs[0].ok, true);
+    assert.equal(docs[0].toModel, 'm_current');
+    assert.equal(docs[1].ok, true);
+    assert.equal(docs[1].endModelSource, 'currentModel');
+  } finally {
+    for (const file of [schedulePath, configPath, fakeBin, path.join(__dirname, 'tmp.router.lock'), path.join(__dirname, 'tmp.router.end.log.jsonl')]) {
+      try { fs.unlinkSync(file); } catch {}
+    }
+  }
+});
   } finally {
     try { fs.unlinkSync(schedulePath); } catch {}
+  }
+});
+
+
+test('cli schedule end returns DEFAULT_MODEL_UNAVAILABLE when default and status are both unavailable', () => {
+  const schedulePath = path.join(__dirname, 'tmp.schedule.end.fail.json');
+  const configPath = path.join(__dirname, 'tmp.router.config.end.fail.json');
+  const fakeBin = path.join(__dirname, 'tmp.openclaw.fail.sh');
+
+  fs.writeFileSync(schedulePath, JSON.stringify({
+    timezone: 'UTC',
+    rules: [{ id: 'night_shift', days: ['mon'], start: '00:00', end: '23:59', model: 'm_night', priority: 1, enabled: true }],
+  }, null, 2));
+
+  fs.writeFileSync(configPath, JSON.stringify({
+    prefixMap: { '@mini': { model: 'm_a', fallbackModel: 'm_b' } },
+    auth: { requiredEnv: [] },
+    safety: { rollbackOnFailure: false, lockPath: path.join(__dirname, 'tmp.router.fail.lock') },
+    logging: { path: path.join(__dirname, 'tmp.router.end.fail.log.jsonl') },
+    sessionController: {
+      binary: fakeBin,
+      setArgsPrefix: ['models', 'set'],
+      statusArgs: ['models', 'status', '--json'],
+      timeoutMs: 5000,
+    },
+  }, null, 2));
+
+  fs.writeFileSync(fakeBin, '#!/usr/bin/env bash\nexit 1\n');
+  fs.chmodSync(fakeBin, 0o755);
+
+  try {
+    assert.throws(() => execFileSync('node', [
+      path.join(__dirname, '..', 'src', 'cli.js'),
+      'schedule', 'end',
+      '--id', 'night_shift',
+      '--schedule', schedulePath,
+      '--config', configPath,
+      '--json',
+    ], { encoding: 'utf8', stdio: 'pipe' }), (err) => {
+      assert.equal(err.status, 2);
+      const payload = JSON.parse(String(err.stdout || '{}'));
+      assert.equal(payload.code, 'DEFAULT_MODEL_UNAVAILABLE');
+      assert.equal(payload.ruleId, 'night_shift:end');
+      return true;
+    });
+  } finally {
+    for (const file of [schedulePath, configPath, fakeBin, path.join(__dirname, 'tmp.router.fail.lock'), path.join(__dirname, 'tmp.router.end.fail.log.jsonl')]) {
+      try { fs.unlinkSync(file); } catch {}
+    }
   }
 });

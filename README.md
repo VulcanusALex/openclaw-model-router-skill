@@ -125,6 +125,7 @@ Important fields:
 - `prefixMap`, `aliasMap`
 - `retry.maxRetries / baseDelayMs / verifyRetries / verifyDelayMs`（全部要求非负整数）
 - `defaultModel`
+- `schedule end` 在 `defaultModel` 缺失时，会尝试读取当前会话模型并在 JSON 输出中标注 `endModelSource`
 - `auth.requiredEnv[]`
 - `safety.rollbackOnFailure / lockPath / lockStaleMs`
 
