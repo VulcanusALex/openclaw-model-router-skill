@@ -26,8 +26,8 @@ Usage:
   node src/cli.js schedule add --id <id> --days <mon,tue> --start <HH:MM> --end <HH:MM> --model <model> [--priority N] [--disable]
   node src/cli.js schedule remove --id <id> [--schedule <path>]
   node src/cli.js schedule resolve [--at "2026-02-28T10:00"] [--schedule <path>]
-  node src/cli.js schedule apply [--id <ruleId>] [--at "2026-02-28T10:00"] [--schedule <path>] [--config <path>] [--json]
-  node src/cli.js schedule end --id <ruleId> [--schedule <path>] [--config <path>] [--json]
+  node src/cli.js schedule apply [--id <ruleId>] [--at "2026-02-28T10:00"] [--schedule <path>] [--config <path>] [--json] [--dry-run]
+  node src/cli.js schedule end --id <ruleId> [--schedule <path>] [--config <path>] [--json] [--dry-run]
   node src/cli.js schedule validate [--schedule <path>]
   node src/cli.js schedule cron [--schedule <path>]
 `;
@@ -263,6 +263,23 @@ async function main() {
         process.exit(4);
       }
 
+      // Dry-run mode: show what would happen without switching
+      if (hasFlag(args, '--dry-run')) {
+        const currentModel = 'unknown'; // Don't query in dry-run for speed
+        const payload = {
+          ok: true,
+          dryRun: true,
+          wouldSwitch: true,
+          ruleId: rule.id,
+          toModel: rule.model,
+          at: when.toISOString(),
+          message: `dry-run: would switch to ${rule.model}`,
+        };
+        if (outputJson) console.log(JSON.stringify(payload, null, 2));
+        else console.log(`dry-run: would switch to ${rule.model}`);
+        return;
+      }
+
       await applyRule({
         rule,
         config,
@@ -304,6 +321,23 @@ async function main() {
           process.exit(2);
         }
       }
+
+      // Dry-run mode: show what would happen without switching
+      if (hasFlag(args, '--dry-run')) {
+        const payload = {
+          ok: true,
+          dryRun: true,
+          wouldSwitch: true,
+          ruleId: `${rule.id}:end`,
+          toModel: fallbackModel,
+          modelSource,
+          message: `dry-run: would switch to ${fallbackModel}`,
+        };
+        if (outputJson) console.log(JSON.stringify(payload, null, 2));
+        else console.log(`dry-run: would switch to ${fallbackModel}`);
+        return;
+      }
+
       await applyRule({
         rule: { ...rule, id: `${rule.id}:end`, model: fallbackModel },
         config,
