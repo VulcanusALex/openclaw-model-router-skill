@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-03-03
+
+- Added `--dry-run` flag to `schedule apply` - shows which rule would activate without switching
+- Added `--dry-run` flag to `schedule end` - shows which fallback model would be used without switching
+- Both support `--json` output for scripting and automation
+
 ## 2026-03-02
 
 - Fixed scheduler conflict detection for overnight windows that overlap next-day early rules.
